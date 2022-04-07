@@ -1,18 +1,18 @@
 package sangria.marshalling
 
+import org.scalatest.matchers.should.Matchers
+import org.scalatest.wordspec.AnyWordSpec
 import sangria.schema._
 import sangria.util.SimpleGraphQlSupport._
 import spray.json._
-import org.scalatest.matchers.should.Matchers
-import org.scalatest.wordspec.AnyWordSpec
 
 class FromInputSpec extends AnyWordSpec with Matchers {
   case class Comment(author: String, text: Option[String])
   case class Article(
-      title: String,
-      text: Option[String],
-      tags: Option[Vector[String]],
-      comments: Vector[Option[Comment]])
+                      title: String,
+                      text: Option[String],
+                      tags: Option[Vector[String]],
+                      comments: Vector[Option[Comment]])
 
   object MyJsonProtocol extends DefaultJsonProtocol {
     implicit val commentFormat = jsonFormat2(Comment.apply)
@@ -39,8 +39,8 @@ class FromInputSpec extends AnyWordSpec with Matchers {
   )
 
   def manualSprayJsonSchema = {
-    import sangria.marshalling.sprayJson.sprayJsonFromInput
     import MyJsonProtocol._
+    import sangria.marshalling.sprayJson.sprayJsonFromInput
 
     val TestType = ObjectType(
       "TestType", {
@@ -151,6 +151,31 @@ class FromInputSpec extends AnyWordSpec with Matchers {
               arguments = arg :: Nil,
               resolve = ctx => {
                 val value: Seq[Option[Article]] = ctx.arg(arg)
+
+                "" + value
+              })
+          }, {
+            val arg = Argument(
+              "articles",
+              ListInputType(ListInputType(Article1Type)),
+              Vector(
+                Vector(
+                  Article(
+                    "def1",
+                    None,
+                    Some(Vector("c", "d")),
+                    Vector(Some(Comment("c1", None)), None)),
+                  Article("def2", Some("some text"), None, Vector.empty)
+                )
+              )
+            )
+
+            Field(
+              "listList",
+              OptionType(StringType),
+              arguments = arg :: Nil,
+              resolve = ctx => {
+                val value: Seq[Seq[Article]] = ctx.arg(arg)
 
                 "" + value
               })
@@ -611,4 +636,54 @@ class FromInputSpec extends AnyWordSpec with Matchers {
       """.parseJson
     )
   }
+
+  "deserialize automatically with spray-json JsonFormat (nested list)" in check(
+    automaticWithJsonFormatSchema,
+    (),
+    """
+        query Test($var1: Article!, $var2: [Article!]!) {
+          nested1: listList(articles: [])
+          nested2: listList(articles: [[]])
+          nested3: listList(articles: [[{title: "bar", text: null, tags: null, comments: [null]}]])
+          nested4: listList(articles: [[$var1], $var2])
+        }
+      """,
+    Map(
+      "data" -> Map(
+        "nested1" -> Vector().toString,
+        "nested2" -> Vector(Vector()).toString,
+        "nested3" -> Vector(Vector(Article("bar", None, None, Vector(None)))).toString,
+        "nested4" -> Vector(
+          Vector(Article(
+            "foo",
+            Some("bar"),
+            Some(Vector("a", "b")),
+            Vector(
+              None,
+              Some(Comment("anonymous", None)),
+              Some(Comment("anonymous", Some("comment3")))))),
+          Vector(
+            Article("bar", None, None, Vector(None)),
+            Article("baz", None, None, Vector.empty)).toString
+        ).toString,
+      )),
+    """
+        {
+          "var1": {
+            "title": "foo",
+            "text": "bar",
+            "tags": ["a", "b"],
+            "comments": [
+              null,
+              {},
+              {"text": "comment3"}
+            ]
+          },
+          "var2": [
+            {"title": "bar", "text": null, "tags": null, "comments": [null]},
+            {"title": "baz", "comments": []}
+          ]
+        }
+      """.parseJson
+  )
 }
